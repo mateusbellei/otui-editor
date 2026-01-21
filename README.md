@@ -31,7 +31,3 @@ bun run preview
 - `POST /api/otui/parse` 
   - body: `{ code: string }`
   - retorno: `{ widgets, templates, templateMap, diagnostics }`
-
-## Referências
-- OTCv8 `OTUI` exemplos: otc folder
-- Editor de referência: `C:\www-dev\otui-editor\OTUIEditor`
