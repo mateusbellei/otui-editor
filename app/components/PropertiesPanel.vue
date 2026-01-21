@@ -13,6 +13,20 @@ const entries = computed<Row[]>(() => {
   const props = Object.entries(n.properties || {}).sort(([a], [b]) => a.localeCompare(b))
   return props.map(([k, v]) => ({ k, v }))
 })
+
+function isBoolean(value: string) {
+  return value === 'true' || value === 'false'
+}
+function isNumericKey(key: string) {
+  return /^(width|height|margin-|padding-|text-offset-|image-)/.test(key)
+}
+function onChange(row: Row, value: string | boolean) {
+  const v = typeof value === 'boolean' ? (value ? 'true' : 'false') : String(value)
+  editor.updateProperty(row.k, v)
+}
+function onRenameId(value: string) {
+  editor.renameId(value)
+}
 </script>
 
 <template>
@@ -23,13 +37,23 @@ const entries = computed<Row[]>(() => {
         <div class="font-medium">Tipo</div>
         <div class="text-muted">{{ selectedNode.originalTypeName || selectedNode.type }}</div>
       </div>
-      <div>
-        <div class="font-medium mb-1">Propriedades</div>
-        <UTable
-          :rows="entries"
-          :columns="[{ accessorKey: 'k', header: 'Chave' }, { accessorKey: 'v', header: 'Valor' }]"
-          :empty-state="{ icon: 'i-lucide-table-2', label: 'Sem propriedades' }"
-        />
+      <div class="space-y-2">
+        <div class="font-medium">Propriedades</div>
+        <div class="grid grid-cols-1 gap-2">
+          <div v-for="row in entries" :key="row.k" class="grid grid-cols-2 gap-2 items-center">
+            <div class="text-xs text-muted break-all">{{ row.k }}</div>
+            <div class="flex items-center">
+              <UToggle v-if="isBoolean(row.v)" :model-value="row.v === 'true'" @update:model-value="onChange(row, $event)" />
+              <UInput v-else-if="isNumericKey(row.k)" :model-value="row.v" inputmode="numeric" @change="onChange(row, ($event?.target as HTMLInputElement)?.value || '')" />
+              <UInput v-else :model-value="row.v" @change="onChange(row, ($event?.target as HTMLInputElement)?.value || '')" />
+            </div>
+          </div>
+        </div>
+        <div class="flex items-center gap-2">
+          <UFormGroup label="Renomear id">
+            <UInput :model-value="selectedNode.properties?.id || ''" placeholder="novo-id" @change="onRenameId(($event?.target as HTMLInputElement)?.value || '')" />
+          </UFormGroup>
+        </div>
       </div>
       <div v-if="selectedNode.propertyList?.length">
         <div class="font-medium mb-1">PropertyList (ordem original)</div>

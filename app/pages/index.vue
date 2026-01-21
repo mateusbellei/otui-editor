@@ -2,7 +2,7 @@
   <div class="space-y-6">
     <UPageHero
       title="OTUI Studio"
-      description="Editor Nuxt/Pinia para analisar e validar arquivos OTUI (OTCv8)."
+      description="Editor to validate and edit OTUI files."
     />
 
     <UContainer>
