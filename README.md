@@ -33,5 +33,5 @@ bun run preview
   - retorno: `{ widgets, templates, templateMap, diagnostics }`
 
 ## Referências
-- OTCv8 `OTUI` exemplos: `C:\vcpkg\ninja-saga\game\client\modules\**\*.otui`
+- OTCv8 `OTUI` exemplos: otc folder
 - Editor de referência: `C:\www-dev\otui-editor\OTUIEditor`
