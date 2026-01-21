@@ -4,6 +4,7 @@ import { storeToRefs } from 'pinia'
 
 type Rect = { x: number; y: number; w: number; h: number }
 type LayoutItem = { path: number[]; rect: Rect; node: WidgetNode }
+type GuideLine = { x1: number; y1: number; x2: number; y2: number }
 
 const editor = useEditorStore()
 const { result, selectedPath } = storeToRefs(editor)
@@ -193,6 +194,8 @@ let dragPath: number[] = []
 let dragStart = { x: 0, y: 0 }
 let dragDelta = { dx: 0, dy: 0 }
 let dragStartRect: Rect | null = null
+const guides = ref<{ v: GuideLine[]; h: GuideLine[] }>({ v: [], h: [] })
+const SNAP_THRESHOLD = 6
 
 function onDragDown(e: PointerEvent, path: number[], itemRect: Rect) {
   const target = e.target as HTMLElement
@@ -209,8 +212,90 @@ function onDragDown(e: PointerEvent, path: number[], itemRect: Rect) {
 
 function onDragMove(e: PointerEvent) {
   if (!dragging) return
-  dragDelta.dx = e.clientX - dragStart.x
-  dragDelta.dy = e.clientY - dragStart.y
+  // raw delta
+  const rawDx = e.clientX - dragStart.x
+  const rawDy = e.clientY - dragStart.y
+  let snapDx = 0
+  let snapDy = 0
+  guides.value = { v: [], h: [] }
+
+  // compute snap vs parent/siblings
+  if (dragStartRect) {
+    const sel = dragPath
+    const parentPath = sel.slice(0, -1)
+    const parentItem = layout.value.find((i: LayoutItem) => samePath(i.path, parentPath))
+    if (parentItem) {
+      // proposed new rect
+      const newRect: Rect = {
+        x: dragStartRect.x + rawDx,
+        y: dragStartRect.y + rawDy,
+        w: dragStartRect.w,
+        h: dragStartRect.h
+      }
+      // candidate snap lines (vertical and horizontal)
+      const siblings = layout.value.filter((i: LayoutItem) => samePath(i.path.slice(0, -1), parentPath))
+      const vCandidates: number[] = []
+      const hCandidates: number[] = []
+      // parent edges/centers
+      vCandidates.push(parentItem.rect.x, parentItem.rect.x + parentItem.rect.w / 2, parentItem.rect.x + parentItem.rect.w)
+      hCandidates.push(parentItem.rect.y, parentItem.rect.y + parentItem.rect.h / 2, parentItem.rect.y + parentItem.rect.h)
+      // siblings edges/centers
+      siblings.forEach((s: LayoutItem) => {
+        const r = s.rect
+        vCandidates.push(r.x, r.x + r.w / 2, r.x + r.w)
+        hCandidates.push(r.y, r.y + r.h / 2, r.y + r.h)
+      })
+      // current edges/centers
+      const left = newRect.x
+      const centerX = newRect.x + newRect.w / 2
+      const right = newRect.x + newRect.w
+      const top = newRect.y
+      const centerY = newRect.y + newRect.h / 2
+      const bottom = newRect.y + newRect.h
+
+      // vertical snap: choose minimal distance among left, centerX, right
+      let bestVDist = SNAP_THRESHOLD + 1
+      let bestVX = 0
+      let bestVEdge: 'left' | 'center' | 'right' | null = null
+      vCandidates.forEach((cx: number) => {
+        const dLeft = Math.abs(left - cx)
+        if (dLeft < bestVDist) { bestVDist = dLeft; bestVX = cx; bestVEdge = 'left' }
+        const dCenter = Math.abs(centerX - cx)
+        if (dCenter < bestVDist) { bestVDist = dCenter; bestVX = cx; bestVEdge = 'center' }
+        const dRight = Math.abs(right - cx)
+        if (dRight < bestVDist) { bestVDist = dRight; bestVX = cx; bestVEdge = 'right' }
+      })
+      if (bestVDist <= SNAP_THRESHOLD && bestVEdge) {
+        if (bestVEdge === 'left') snapDx = bestVX - left
+        else if (bestVEdge === 'center') snapDx = bestVX - centerX
+        else snapDx = bestVX - right
+        // vertical guide line (full height of canvas)
+        guides.value.v.push({ x1: bestVX, y1: 0, x2: bestVX, y2: 9999 })
+      }
+
+      // horizontal snap: choose minimal distance among top, centerY, bottom
+      let bestHDist = SNAP_THRESHOLD + 1
+      let bestHY = 0
+      let bestHEdge: 'top' | 'center' | 'bottom' | null = null
+      hCandidates.forEach((cy: number) => {
+        const dTop = Math.abs(top - cy)
+        if (dTop < bestHDist) { bestHDist = dTop; bestHY = cy; bestHEdge = 'top' }
+        const dCenter = Math.abs(centerY - cy)
+        if (dCenter < bestHDist) { bestHDist = dCenter; bestHY = cy; bestHEdge = 'center' }
+        const dBottom = Math.abs(bottom - cy)
+        if (dBottom < bestHDist) { bestHDist = dBottom; bestHY = cy; bestHEdge = 'bottom' }
+      })
+      if (bestHDist <= SNAP_THRESHOLD && bestHEdge) {
+        if (bestHEdge === 'top') snapDy = bestHY - top
+        else if (bestHEdge === 'center') snapDy = bestHY - centerY
+        else snapDy = bestHY - bottom
+        // horizontal guide line (full width of canvas)
+        guides.value.h.push({ x1: 0, y1: bestHY, x2: 9999, y2: bestHY })
+      }
+    }
+  }
+  dragDelta.dx = rawDx + snapDx
+  dragDelta.dy = rawDy + snapDy
 }
 
 function onDragUp() {
@@ -262,6 +347,7 @@ function onDragUp() {
   dragPath = []
   dragDelta = { dx: 0, dy: 0 }
   dragStartRect = null
+  guides.value = { v: [], h: [] }
 }
 </script>
 
@@ -275,6 +361,10 @@ function onDragUp() {
     </div>
     <svg v-if="overlay" class="absolute inset-0 pointer-events-none" :width="'100%'" :height="'100%'" xmlns="http://www.w3.org/2000/svg">
       <line v-for="(l, i) in overlay.lines" :key="i" :x1="l.x1" :y1="l.y1" :x2="l.x2" :y2="l.y2" stroke="rgb(16,185,129)" stroke-width="1.5" stroke-dasharray="4 3" />
+    </svg>
+    <svg v-if="guides.v.length || guides.h.length" class="absolute inset-0 pointer-events-none" :width="'100%'" :height="'100%'" xmlns="http://www.w3.org/2000/svg">
+      <line v-for="(l, i) in guides.v" :key="'v'+i" :x1="l.x1" :y1="l.y1" :x2="l.x2" :y2="l.y2" stroke="rgb(59,130,246)" stroke-width="1" stroke-dasharray="3 3" />
+      <line v-for="(l, i) in guides.h" :key="'h'+i" :x1="l.x1" :y1="l.y1" :x2="l.x2" :y2="l.y2" stroke="rgb(59,130,246)" stroke-width="1" stroke-dasharray="3 3" />
     </svg>
   </div>
 </template>
