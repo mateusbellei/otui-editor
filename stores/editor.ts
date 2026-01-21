@@ -26,7 +26,8 @@ export const useEditorStore = defineStore('editor', {
     code: '' as string,
     parsing: false as boolean,
     result: null as ParseResult | null,
-    error: '' as string
+    error: '' as string,
+    selectedPath: [] as number[]
   }),
   actions: {
     async parse() {
@@ -38,12 +39,29 @@ export const useEditorStore = defineStore('editor', {
           body: { code: this.code }
         })
         this.result = res
+        this.selectedPath = []
       } catch (e: any) {
         this.error = e?.data?.error || e?.message || 'Failed to parse'
         this.result = null
       } finally {
         this.parsing = false
       }
+    },
+    selectPath(path: number[]) {
+      this.selectedPath = [...path]
+    }
+  },
+  getters: {
+    selectedNode(state): WidgetNode | null {
+      if (!state.result) return null
+      let nodes = state.result.widgets
+      let node: WidgetNode | undefined
+      for (const idx of state.selectedPath) {
+        node = nodes[idx]
+        if (!node) return null
+        nodes = node.children
+      }
+      return node || null
     }
   }
 })
