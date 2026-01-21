@@ -19,7 +19,18 @@
           </div>
         </template>
 
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div class="space-y-6">
+          <UCard>
+            <template #header>
+              <div class="font-medium">Canvas Preview</div>
+            </template>
+            <div class="w-full">
+              <Canvas v-if="result?.widgets?.length" />
+              <div v-else class="text-sm text-muted">Insira código e clique em Parse para visualizar.</div>
+            </div>
+          </UCard>
+
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <div class="space-y-3">
             <UFormGroup label="Código OTUI">
               <UTextarea v-model="code" :rows="16" autoresize placeholder="Cole seu .otui aqui..." />
@@ -63,6 +74,7 @@
               <AnchorPanel />
             </UCard>
           </div>
+        </div>
         </div>
       </UCard>
     </UContainer>
