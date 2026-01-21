@@ -3,6 +3,7 @@ import { useEditorStore, type WidgetNode } from '~~/stores/editor'
 import { storeToRefs } from 'pinia'
 
 type Rect = { x: number; y: number; w: number; h: number }
+type LayoutItem = { path: number[]; rect: Rect; node: WidgetNode }
 
 const editor = useEditorStore()
 const { result, selectedPath } = storeToRefs(editor)
@@ -43,13 +44,13 @@ function layoutTree(nodes: WidgetNode[], startY = 0): Array<{ path: number[]; re
   return out
 }
 
-const layout = computed(() => {
+const layout = computed<LayoutItem[]>(() => {
   if (!result.value?.widgets?.length) return []
   return layoutTree(result.value.widgets)
 })
 
 function samePath(a: number[], b: number[]) {
-  return a.length === b.length && a.every((v, i) => v === b[i])
+  return a.length === b.length && a.every((v, i: number) => v === b[i])
 }
 
 function select(path: number[]) {
@@ -96,7 +97,7 @@ function onResizeUp() {
 const overlay = computed(() => {
   const sel = selectedPath.value
   if (!sel.length) return null
-  const targetItem = layout.value.find(i => samePath(i.path, sel))
+  const targetItem = layout.value.find((i: LayoutItem) => samePath(i.path, sel))
   if (!targetItem) return null
   const n = targetItem.node
   const anchors = Object.entries(n.properties || {}).filter(([k]) => k.startsWith('anchors.'))
@@ -106,7 +107,7 @@ const overlay = computed(() => {
     if (id === 'parent') {
       // approximate parent as closest ancestor in layout
       const parentPath = sel.slice(0, -1)
-      const p = layout.value.find(i => samePath(i.path, parentPath))
+      const p = layout.value.find((i: LayoutItem) => samePath(i.path, parentPath))
       return p?.rect || null
     }
     if (id === 'prev' || id === 'next') {
@@ -115,11 +116,11 @@ const overlay = computed(() => {
       const idx = typeof idxRaw === 'number' ? idxRaw : 0
       const sibIndex = id === 'prev' ? idx - 1 : idx + 1
       const sibPath = [...parentPath, sibIndex]
-      const s = layout.value.find(i => samePath(i.path, sibPath))
+      const s = layout.value.find((i: LayoutItem) => samePath(i.path, sibPath))
       return s?.rect || null
     }
     // by id
-    const item = layout.value.find(i => i.node.properties?.id === id)
+    const item = layout.value.find((i: LayoutItem) => i.node.properties?.id === id)
     return item?.rect || null
   }
 
@@ -185,15 +186,92 @@ const overlay = computed(() => {
   }
   return { lines }
 })
+
+// Drag to move with anchor suggestion
+let dragging = false
+let dragPath: number[] = []
+let dragStart = { x: 0, y: 0 }
+let dragDelta = { dx: 0, dy: 0 }
+let dragStartRect: Rect | null = null
+
+function onDragDown(e: PointerEvent, path: number[], itemRect: Rect) {
+  const target = e.target as HTMLElement
+  // ignore when grabbing resize handle
+  if (target && target.classList.contains('resizer')) return
+  e.preventDefault()
+  dragging = true
+  dragPath = path
+  dragStart = { x: e.clientX, y: e.clientY }
+  dragDelta = { dx: 0, dy: 0 }
+  dragStartRect = { ...itemRect }
+  ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
+}
+
+function onDragMove(e: PointerEvent) {
+  if (!dragging) return
+  dragDelta.dx = e.clientX - dragStart.x
+  dragDelta.dy = e.clientY - dragStart.y
+}
+
+function onDragUp() {
+  if (!dragging) return
+  // Suggest anchors based on new position
+  const sel = dragPath
+  const item = layout.value.find((i: LayoutItem) => samePath(i.path, sel))
+  const parentPath = sel.slice(0, -1)
+  const parentItem = layout.value.find((i: LayoutItem) => samePath(i.path, parentPath))
+  if (item && dragStartRect) {
+    const newRect: Rect = {
+      x: dragStartRect.x + dragDelta.dx,
+      y: dragStartRect.y + dragDelta.dy,
+      w: dragStartRect.w,
+      h: dragStartRect.h
+    }
+    // snap for margins
+    newRect.x = Math.round(newRect.x / gridSize) * gridSize
+    newRect.y = Math.round(newRect.y / gridSize) * gridSize
+    // Horizontal: anchor to parent.left with margin-left
+    const marginLeft = parentItem ? Math.max(0, Math.round(newRect.x - parentItem.rect.x)) : Math.max(0, Math.round(newRect.x))
+    editor.selectPath(sel)
+    editor.setAnchor('anchors.left', 'parent.left')
+    editor.updateProperty('margin-left', String(marginLeft))
+    // Vertical: if has previous sibling and is closer to its bottom, anchor to prev.bottom; else parent.top
+    const idxRaw = sel[sel.length - 1]
+    const idx = typeof idxRaw === 'number' ? idxRaw : 0
+    const prevPath = [...parentPath, idx - 1]
+    const prevItem = layout.value.find((i: LayoutItem) => samePath(i.path, prevPath))
+    if (prevItem) {
+      const distPrev = Math.abs(newRect.y - (prevItem.rect.y + prevItem.rect.h))
+      const distTop = parentItem ? Math.abs(newRect.y - parentItem.rect.y) : Math.abs(newRect.y)
+      if (distPrev <= distTop + 20) {
+        editor.setAnchor('anchors.top', 'prev.bottom')
+        const marginTop = Math.max(0, Math.round(newRect.y - (prevItem.rect.y + prevItem.rect.h)))
+        editor.updateProperty('margin-top', String(marginTop))
+      } else {
+        editor.setAnchor('anchors.top', 'parent.top')
+        const marginTop = parentItem ? Math.max(0, Math.round(newRect.y - parentItem.rect.y)) : Math.max(0, Math.round(newRect.y))
+        editor.updateProperty('margin-top', String(marginTop))
+      }
+    } else {
+      editor.setAnchor('anchors.top', 'parent.top')
+      const marginTop = parentItem ? Math.max(0, Math.round(newRect.y - parentItem.rect.y)) : Math.max(0, Math.round(newRect.y))
+      editor.updateProperty('margin-top', String(marginTop))
+    }
+  }
+  dragging = false
+  dragPath = []
+  dragDelta = { dx: 0, dy: 0 }
+  dragStartRect = null
+}
 </script>
 
 <template>
-  <div class="relative w-full h-[700px] border rounded bg-[linear-gradient(90deg,rgba(0,0,0,0.05)_1px,transparent_1px),linear-gradient(180deg,rgba(0,0,0,0.05)_1px,transparent_1px)]" :style="{ backgroundSize: `${gridSize * 1}px ${gridSize * 1}px` }" @pointermove="onResizeMove" @pointerup="onResizeUp" @pointercancel="onResizeUp" @pointerleave="onResizeUp">
-    <div v-for="item in layout" :key="item.path.join('-')" class="absolute rounded border border-primary/30 bg-primary/5 hover:bg-primary/10" :style="{ left: `${item.rect.x}px`, top: `${item.rect.y}px`, width: `${item.rect.w}px`, height: `${item.rect.h}px` }" @click.stop="select(item.path)" :class="{ 'ring-2 ring-primary/70': samePath(item.path, selectedPath) }">
+  <div class="relative w-full h-[700px] border rounded bg-[linear-gradient(90deg,rgba(0,0,0,0.05)_1px,transparent_1px),linear-gradient(180deg,rgba(0,0,0,0.05)_1px,transparent_1px)]" :style="{ backgroundSize: `${gridSize * 1}px ${gridSize * 1}px` }" @pointermove="(e)=>{ onResizeMove(e); onDragMove(e) }" @pointerup="()=>{ onResizeUp(); onDragUp() }" @pointercancel="()=>{ onResizeUp(); onDragUp() }" @pointerleave="()=>{ onResizeUp(); onDragUp() }">
+    <div v-for="item in layout" :key="item.path.join('-')" class="absolute rounded border border-primary/30 bg-primary/5 hover:bg-primary/10" :style="{ left: `${item.rect.x}px`, top: `${item.rect.y}px`, width: `${item.rect.w}px`, height: `${item.rect.h}px`, transform: samePath(item.path, dragPath) ? `translate(${dragDelta.dx}px, ${dragDelta.dy}px)` : 'none' }" @pointerdown="(e)=> onDragDown(e, item.path, item.rect)" @click.stop="select(item.path)" :class="{ 'ring-2 ring-primary/70': samePath(item.path, selectedPath) }">
       <div class="text-[11px] px-1 py-0.5 text-muted border-b border-primary/20 truncate">
         {{ item.node.originalTypeName || item.node.type }} <span v-if="item.node.properties?.id">#{{ item.node.properties.id }}</span>
       </div>
-      <div class="absolute right-0 bottom-0 translate-x-1/2 translate-y-1/2 w-3 h-3 bg-primary rounded-sm cursor-nwse-resize" @pointerdown="onResizeDown($event, item.path, item.node)" />
+      <div class="absolute right-0 bottom-0 translate-x-1/2 translate-y-1/2 w-3 h-3 bg-primary rounded-sm cursor-nwse-resize resizer" @pointerdown="onResizeDown($event, item.path, item.node)" />
     </div>
     <svg v-if="overlay" class="absolute inset-0 pointer-events-none" :width="'100%'" :height="'100%'" xmlns="http://www.w3.org/2000/svg">
       <line v-for="(l, i) in overlay.lines" :key="i" :x1="l.x1" :y1="l.y1" :x2="l.x2" :y2="l.y2" stroke="rgb(16,185,129)" stroke-width="1.5" stroke-dasharray="4 3" />
